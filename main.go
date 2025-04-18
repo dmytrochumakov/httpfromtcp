@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -15,6 +16,8 @@ func main() {
 	defer file.Close()
 
 	res := make([]byte, 8)
+	var currentLine string
+
 	for {
 		n, err := file.Read(res)
 		if err != nil {
@@ -24,6 +27,16 @@ func main() {
 			fmt.Println("can't read from file")
 			return
 		}
-		fmt.Printf("read: %s\n", res[:n])
+		data := currentLine + string(res[:n])
+		parts := strings.Split(data, "\n")
+		for i := 0; i < len(parts)-1; i++ {
+			fmt.Printf("read: %s\n", parts[i])
+		}
+
+		currentLine = parts[len(parts)-1]
+	}
+
+	if currentLine != "" {
+		fmt.Println(currentLine)
 	}
 }
