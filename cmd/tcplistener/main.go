@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+
+	"github.com/dmytrochumakov/httpfromtcp/internal/request"
 )
 
 func main() {
@@ -23,7 +25,15 @@ func main() {
 			return
 		}
 		fmt.Println("connection has been accepted")
-		RequestFromReader(conn)
+		requestLine, err := request.RequestFromReader(conn)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+		fmt.Println("Request line:")
+		fmt.Printf("- Method: %s\n", requestLine.RequestLine.Method)
+		fmt.Printf("- Target: %s\n", requestLine.RequestLine.RequestTarget)
+		fmt.Printf("- Version: %s", requestLine.RequestLine.HttpVersion)
 	}
 
 }
