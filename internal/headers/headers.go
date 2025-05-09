@@ -37,10 +37,21 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 		return 0, false, errors.New("header key is empty")
 	}
 
-	key = strings.ToLower(key)
-	h[key] = value
+	h.Set(key, value)
 
 	return lineEnd + 2, false, nil
+}
+
+func (h Headers) Set(key, value string) {
+	key = strings.ToLower(key)
+	v, exist := h[key]
+	if exist {
+		value = strings.Join([]string{
+			v,
+			value,
+		}, ", ")
+	}
+	h[key] = value
 }
 
 func keyIsValid(s string) bool {
