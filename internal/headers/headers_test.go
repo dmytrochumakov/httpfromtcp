@@ -75,7 +75,3 @@ func TestHeaders(t *testing.T) {
 	assert.Equal(t, 23, n)
 	assert.False(t, done)
 }
-
-func NewHeaders() Headers {
-	return make(map[string]string)
-}

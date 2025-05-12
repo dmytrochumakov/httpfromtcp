@@ -8,6 +8,10 @@ import (
 
 type Headers map[string]string
 
+func NewHeaders() Headers {
+	return make(map[string]string)
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	if bytes.HasPrefix(data, []byte("\r\n")) {
 		return 2, true, nil

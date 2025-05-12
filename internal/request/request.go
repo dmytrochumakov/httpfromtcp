@@ -2,13 +2,17 @@ package request
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+
+	"github.com/dmytrochumakov/httpfromtcp/internal/headers"
 )
 
 type Request struct {
 	RequestLine RequestLine
 	ParserState ParserState
+	Headers     headers.Headers
 }
 
 type RequestLine struct {
@@ -27,6 +31,7 @@ type ParserState int
 
 const (
 	StateInitialized ParserState = iota
+	StateParsingHeaders
 	StateDone
 )
 
@@ -36,7 +41,10 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	buf := make([]byte, bufferSize)
 	readToIndex := 0
 
-	request := &Request{ParserState: StateInitialized}
+	request := &Request{
+		ParserState: StateInitialized,
+		Headers:     headers.NewHeaders(),
+	}
 
 	for request.ParserState != StateDone {
 		bufLen := len(buf)
@@ -48,7 +56,10 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		n, err := reader.Read(buf[readToIndex:])
 		if err == io.EOF {
-			request.ParserState = StateDone
+			if request.ParserState != StateDone {
+				return nil, fmt.Errorf("incomplete request in state: %d", request.ParserState)
+			}
+
 			break
 		}
 		if err != nil {
@@ -113,6 +124,22 @@ func (cr *chunkReader) Read(p []byte) (n int, err error) {
 }
 
 func (r *Request) parse(data []byte) (int, error) {
+	totalBytesParsed := 0
+
+	for r.ParserState != StateDone {
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			return 0, err
+		}
+		totalBytesParsed += n
+		if n == 0 {
+			break
+		}
+	}
+	return totalBytesParsed, nil
+}
+
+func (r *Request) parseSingle(data []byte) (int, error) {
 	switch r.ParserState {
 	case StateInitialized:
 		parsedRequestLine, numberOfBytes, err := parseRequestLine(string(data))
@@ -123,7 +150,16 @@ func (r *Request) parse(data []byte) (int, error) {
 			return 0, nil
 		}
 		r.RequestLine = *parsedRequestLine
-		r.ParserState = StateDone
+		r.ParserState = StateParsingHeaders
+		return numberOfBytes, nil
+	case StateParsingHeaders:
+		numberOfBytes, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+		if done {
+			r.ParserState = StateDone
+		}
 		return numberOfBytes, nil
 	case StateDone:
 		return 0, errors.New("trying read data in done state")
