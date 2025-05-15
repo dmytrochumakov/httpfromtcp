@@ -2,11 +2,12 @@ package server
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
+
+	"github.com/dmytrochumakov/httpfromtcp/internal/response"
 )
 
 type ServerState int
@@ -69,11 +70,13 @@ func (s *Server) listen() {
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
-	response := "HTTP/1.1 200 OK\r\n" +
-		"Content-Type: text/plain\r\n" +
-		"Content-Length: 12\r\n" + // Length of "Hello World!"
-		"\r\n" +
-		"Hello World!"
+	err := response.WriteStatusLine(conn, 200)
+	if err != nil {
+		fmt.Printf("unable to write status line, %s\n", err)
+		return
+	}
 
-	_, _ = io.WriteString(conn, response)
+	defaultHeaders := response.GetDefaultHeaders(0)
+
+	response.WriteHeaders(conn, defaultHeaders)
 }
