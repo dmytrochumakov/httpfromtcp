@@ -1,12 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
 
+	"github.com/dmytrochumakov/httpfromtcp/internal/request"
 	"github.com/dmytrochumakov/httpfromtcp/internal/response"
 )
 
@@ -21,9 +24,17 @@ type Server struct {
 	listener net.Listener
 	wg       sync.WaitGroup
 	closed   atomic.Bool
+	handler  Handler
 }
 
-func Serve(port int) (*Server, error) {
+type HandlerError struct {
+	StatusCode response.StatusCode
+	Message    string
+}
+
+type Handler func(w io.Writer, req *request.Request) *HandlerError
+
+func Serve(port int, handler Handler) (*Server, error) {
 	addr := fmt.Sprintf(":%d", port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -33,6 +44,7 @@ func Serve(port int) (*Server, error) {
 	server := Server{
 		state:    initialized,
 		listener: listener,
+		handler:  handler,
 	}
 	server.closed.Store(false)
 
@@ -70,13 +82,40 @@ func (s *Server) listen() {
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
-	err := response.WriteStatusLine(conn, 200)
+	req, err := request.RequestFromReader(conn)
 	if err != nil {
-		fmt.Printf("unable to write status line, %s\n", err)
+		hErr := HandlerError{
+			StatusCode: response.BadRequest,
+			Message:    err.Error(),
+		}
+		hErr.Write(conn)
 		return
 	}
 
-	defaultHeaders := response.GetDefaultHeaders(0)
+	buf := bytes.NewBuffer([]byte{})
+	hErr := s.handler(buf, req)
+	if hErr != nil {
+		hErr.Write(conn)
+		return
+	}
 
+	b := buf.Bytes()
+
+	response.WriteStatusLine(conn, response.OK)
+	defaultHeaders := response.GetDefaultHeaders(len(b))
 	response.WriteHeaders(conn, defaultHeaders)
+	conn.Write(b)
+	return
+}
+
+func (e *HandlerError) Error() string {
+	return fmt.Sprintf("%d: %s", e.StatusCode, e.Message)
+}
+
+func (he *HandlerError) Write(w io.Writer) {
+	response.WriteStatusLine(w, he.StatusCode)
+	messageBytes := []byte(he.Message)
+	headers := response.GetDefaultHeaders(len(messageBytes))
+	response.WriteHeaders(w, headers)
+	w.Write(messageBytes)
 }
