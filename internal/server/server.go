@@ -1,9 +1,7 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -27,12 +25,7 @@ type Server struct {
 	handler  Handler
 }
 
-type HandlerError struct {
-	StatusCode response.StatusCode
-	Message    string
-}
-
-type Handler func(w io.Writer, req *request.Request) *HandlerError
+type Handler func(w *response.Writer, req *request.Request)
 
 func Serve(port int, handler Handler) (*Server, error) {
 	addr := fmt.Sprintf(":%d", port)
@@ -81,41 +74,15 @@ func (s *Server) listen() {
 
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
-
+	w := response.NewWriter(conn)
 	req, err := request.RequestFromReader(conn)
 	if err != nil {
-		hErr := HandlerError{
-			StatusCode: response.BadRequest,
-			Message:    err.Error(),
-		}
-		hErr.Write(conn)
+		w.WriteStatusLine(response.BadRequest)
+		body := "error parsing request"
+		w.WriteHeaders(response.GetDefaultHeaders(len(body)))
+		w.WriteBody([]byte(body))
 		return
 	}
 
-	buf := bytes.NewBuffer([]byte{})
-	hErr := s.handler(buf, req)
-	if hErr != nil {
-		hErr.Write(conn)
-		return
-	}
-
-	b := buf.Bytes()
-
-	response.WriteStatusLine(conn, response.OK)
-	defaultHeaders := response.GetDefaultHeaders(len(b))
-	response.WriteHeaders(conn, defaultHeaders)
-	conn.Write(b)
-	return
-}
-
-func (e *HandlerError) Error() string {
-	return fmt.Sprintf("%d: %s", e.StatusCode, e.Message)
-}
-
-func (he *HandlerError) Write(w io.Writer) {
-	response.WriteStatusLine(w, he.StatusCode)
-	messageBytes := []byte(he.Message)
-	headers := response.GetDefaultHeaders(len(messageBytes))
-	response.WriteHeaders(w, headers)
-	w.Write(messageBytes)
+	s.handler(w, req)
 }
