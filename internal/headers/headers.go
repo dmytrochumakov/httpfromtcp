@@ -69,6 +69,10 @@ func (h Headers) Override(key, value string) {
 	h[key] = value
 }
 
+func (h Headers) Delete(key string) {
+	delete(h, key)
+}
+
 func keyIsValid(s string) bool {
 	for _, char := range s {
 		if !isAllowedKeyChar(char) {

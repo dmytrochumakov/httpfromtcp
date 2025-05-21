@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/dmytrochumakov/httpfromtcp/internal/request"
@@ -38,7 +42,52 @@ func handler(w *response.Writer, req *request.Request) {
 		return
 	}
 
+	if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/") {
+		proxyHandler(w, req)
+		return
+	}
+
 	handler200(w, req)
+}
+
+func proxyHandler(w *response.Writer, req *request.Request) {
+	path := strings.TrimPrefix(req.RequestLine.RequestTarget, "/httpbin/")
+	url := fmt.Sprintf("https://httpbin.org/%s", path)
+	fmt.Printf("url %s \n", url)
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Printf("unable to request data: %s\n", err)
+		handler500(w, req)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.WriteStatusLine(response.OK)
+	h := response.GetDefaultHeaders(0)
+	h.Delete("Content-Length")
+	h.Set("Transfer-Encoding", "chunked")
+	w.WriteHeaders(h)
+
+	buf := make([]byte, 1024)
+	for {
+		n, err := resp.Body.Read(buf)
+
+		fmt.Printf("received data bytes: %d\n", n)
+
+		if n > 0 {
+			w.WriteChunkedBody(buf[:n])
+		}
+
+		if err != nil {
+			if err == io.EOF {
+				w.WriteChunkedBodyDone()
+			} else {
+				fmt.Printf("Error reading response: %v\n", err)
+			}
+			break
+		}
+	}
+	fmt.Println("finished proxiying request")
 }
 
 func handler200(w *response.Writer, req *request.Request) {

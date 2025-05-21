@@ -95,6 +95,39 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 	return w.Write(p)
 }
 
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	if w.state != stateHeadersWritten {
+		return 0, fmt.Errorf("body only can be written after headers")
+	}
+
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	if _, err := fmt.Fprintf(w.w, "%x\r\n", len(p)); err != nil {
+		return 0, err
+	}
+
+	n, err := w.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	if _, err := io.WriteString(w.w, "\r\n"); err != nil {
+		return n, err
+	}
+
+	return n, nil
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	if w.state != stateHeadersWritten {
+		return 0, fmt.Errorf("body only can be written after headers")
+	}
+	n, err := io.WriteString(w.w, "0\r\n\r\n")
+	return n, err
+}
+
 func (w *Writer) Write(p []byte) (int, error) {
 	return w.w.Write(p)
 }
