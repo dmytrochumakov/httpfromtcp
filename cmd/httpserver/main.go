@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/dmytrochumakov/httpfromtcp/internal/headers"
 	"github.com/dmytrochumakov/httpfromtcp/internal/request"
 	"github.com/dmytrochumakov/httpfromtcp/internal/response"
 	"github.com/dmytrochumakov/httpfromtcp/internal/server"
@@ -51,12 +53,11 @@ func handler(w *response.Writer, req *request.Request) {
 }
 
 func proxyHandler(w *response.Writer, req *request.Request) {
-	path := strings.TrimPrefix(req.RequestLine.RequestTarget, "/httpbin/")
-	url := fmt.Sprintf("https://httpbin.org/%s", path)
-	fmt.Printf("url %s \n", url)
+	target := strings.TrimPrefix(req.RequestLine.RequestTarget, "/httpbin/")
+	url := "https://httpbin.org/" + target
+	fmt.Println("Proxying to", url)
 	resp, err := http.Get(url)
 	if err != nil {
-		fmt.Printf("unable to request data: %s\n", err)
 		handler500(w, req)
 		return
 	}
@@ -64,30 +65,47 @@ func proxyHandler(w *response.Writer, req *request.Request) {
 
 	w.WriteStatusLine(response.OK)
 	h := response.GetDefaultHeaders(0)
+	h.Override("Transfer-Encoding", "chunked")
+	h.Override("Trailer", "X-Content-SHA256, X-Content-Length")
 	h.Delete("Content-Length")
-	h.Set("Transfer-Encoding", "chunked")
 	w.WriteHeaders(h)
 
-	buf := make([]byte, 1024)
+	fullBody := make([]byte, 0)
+
+	const maxChunkSize = 1024
+	buffer := make([]byte, maxChunkSize)
 	for {
-		n, err := resp.Body.Read(buf)
-
-		fmt.Printf("received data bytes: %d\n", n)
-
+		n, err := resp.Body.Read(buffer)
+		fmt.Println("Read", n, "bytes")
 		if n > 0 {
-			w.WriteChunkedBody(buf[:n])
-		}
-
-		if err != nil {
-			if err == io.EOF {
-				w.WriteChunkedBodyDone()
-			} else {
-				fmt.Printf("Error reading response: %v\n", err)
+			_, err = w.WriteChunkedBody(buffer[:n])
+			if err != nil {
+				fmt.Println("Error writing chunked body:", err)
+				break
 			}
+			fullBody = append(fullBody, buffer[:n]...)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fmt.Println("Error reading response body:", err)
 			break
 		}
 	}
-	fmt.Println("finished proxiying request")
+	_, err = w.WriteChunkedBodyDone()
+	if err != nil {
+		fmt.Println("Error writing chunked body done:", err)
+	}
+	trailers := headers.NewHeaders()
+	sha256 := fmt.Sprintf("%x", sha256.Sum256(fullBody))
+	trailers.Override("X-Content-SHA256", sha256)
+	trailers.Override("X-Content-Length", fmt.Sprintf("%d", len(fullBody)))
+	err = w.WriteTrailers(trailers)
+	if err != nil {
+		fmt.Println("Error writing trailers:", err)
+	}
+	fmt.Println("Wrote trailers")
 }
 
 func handler200(w *response.Writer, req *request.Request) {

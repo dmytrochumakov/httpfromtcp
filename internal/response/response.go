@@ -22,6 +22,7 @@ const (
 	stateInitial WriterState = iota
 	stateStatusLineWritten
 	stateHeadersWritten
+	stateBodyWritten
 )
 
 type Writer struct {
@@ -97,35 +98,56 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 
 func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
 	if w.state != stateHeadersWritten {
-		return 0, fmt.Errorf("body only can be written after headers")
+		return 0, fmt.Errorf("cannot write body in state %d", w.state)
 	}
+	chunkSize := len(p)
 
-	if len(p) == 0 {
-		return 0, nil
-	}
-
-	if _, err := fmt.Fprintf(w.w, "%x\r\n", len(p)); err != nil {
-		return 0, err
-	}
-
-	n, err := w.Write(p)
+	nTotal := 0
+	n, err := fmt.Fprintf(w.w, "%x\r\n", chunkSize)
 	if err != nil {
-		return n, err
+		return nTotal, err
 	}
+	nTotal += n
 
-	if _, err := io.WriteString(w.w, "\r\n"); err != nil {
-		return n, err
+	n, err = w.Write(p)
+	if err != nil {
+		return nTotal, err
 	}
+	nTotal += n
 
-	return n, nil
+	n, err = w.Write([]byte("\r\n"))
+	if err != nil {
+		return nTotal, err
+	}
+	nTotal += n
+	return nTotal, nil
 }
 
 func (w *Writer) WriteChunkedBodyDone() (int, error) {
 	if w.state != stateHeadersWritten {
-		return 0, fmt.Errorf("body only can be written after headers")
+		return 0, fmt.Errorf("cannot write body in state %d", w.state)
 	}
-	n, err := io.WriteString(w.w, "0\r\n\r\n")
-	return n, err
+	n, err := w.Write([]byte("0\r\n"))
+	if err != nil {
+		return n, err
+	}
+	w.state = stateBodyWritten
+	return n, nil
+}
+
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	if w.state != stateBodyWritten {
+		return fmt.Errorf("cannot write trailers in state %d", w.state)
+	}
+	defer func() { w.state = stateBodyWritten }()
+	for k, v := range h {
+		_, err := w.Write([]byte(fmt.Sprintf("%s: %s\r\n", k, v)))
+		if err != nil {
+			return err
+		}
+	}
+	_, err := w.Write([]byte("\r\n"))
+	return err
 }
 
 func (w *Writer) Write(p []byte) (int, error) {
